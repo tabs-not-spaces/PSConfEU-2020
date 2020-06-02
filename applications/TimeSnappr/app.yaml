@@ -1,0 +1,28 @@
+application:
+  appName: "TimeSnappr"
+  publisher: "TimeSnappr"
+  description: 'TimeSnappr'
+  appUrl: "https://githublfs.blob.core.windows.net/storage/ApplicationMedia/TimeSnapperProSetup.zip"
+  appFile: "TimeSnapprProSetup.zip"
+  unpack: true
+  installFile: "Install.ps1"
+  installCmdLine: "powershell.exe -executionpolicy bypass -WindowStyle Hidden -file \"./install.ps1\""
+  uninstallCmdLine: "cmd.exe"
+
+requirements:
+  runAs32: false
+  minOSArch: "v10_1809"
+
+detection:
+  detectionType: "file"
+  file:
+    path: "C:\\program files (x86)\\TimeSnapper"
+    fileOrFolderName: "TimeSnapper.exe"
+    fileDetectionType: "exists"
+    check32BitRegOn64System: false
+  registry:
+    registryKeyPath: ""
+    registryDetectionType: ""
+    check32BitRegOn64System: false
+  msi:
+    msiProductCode: ""

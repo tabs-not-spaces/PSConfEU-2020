@@ -1,0 +1,102 @@
+# TODO: - dynamically build the VM
+# TODO: - implement valid detection methods
+trigger:
+  branches:
+    include:
+      - master
+  paths:
+    include:
+      - /applications
+
+variables:
+  - name: rgName
+    value: 'RESOURCE-GROUP-NAME'
+  - name: vmName
+    value: 'VM-NAME'
+  - name: pipName
+    value: 'PUBLIC-IP-NAME'
+
+stages:
+  - stage: Build_and_Test
+    jobs:
+      - job:
+        displayName: "Build_and_Test"
+        pool:
+          vmImage: 'vs2017-win2016'
+        steps:
+          - task: AzurePowerShell@5
+            displayName: "Grabbing public IP"
+            inputs:
+              azureSubscription: 'CREATE YOUR SERVICE CONNECTION'
+              ScriptType: 'InlineScript'
+              Inline: |
+                $azVM = Get-AzVM -ResourceGroupName $(rgName) -Name $(vmName)
+                $azPip = Get-AzPublicIpAddress -ResourceGroupName $(rgName) -Name $(pipName)
+                $azPip.ipAddress
+                Write-Host "##vso[task.setvariable variable=pip]$($azPip.IpAddress)"
+              azurePowerShellVersion: 'LatestVersion'
+              pwsh: true
+
+          # upload your SSH Identity key to DevOps as a secure file..
+          - task: DownloadSecureFile@1
+            name: sshID
+            displayName: "Grab SSH keys.."
+            inputs:
+              secureFile: 'id_rsa'
+
+          - task: PowerShell@2
+            displayName: "configure SSH keys.."
+            inputs:
+              targetType: 'inline'
+              script: |
+                write-host "$(pip)"
+                Get-Content $(sshID.secureFilePath) -raw | out-file $(Agent.TempDirectory)/sshid_rsa -Encoding ASCII
+                if (!(test-path "$env:Userprofile/.ssh" -ErrorAction SilentlyContinue)) {
+                  New-Item "$env:Userprofile/.ssh" -ItemType Directory -Force | Out-Null
+                }
+                write-host "set up pubkey.."
+                ssh-keyscan $(pip) | Out-File $env:Userprofile/.ssh/known_hosts -encoding ascii -force
+                write-host "checking staging directory.."
+                gci $(Build.StagingDirectory) -recurse
+              pwsh: true
+
+          - task: PowerShell@2
+            displayName: "Preparing Environment"
+            inputs:
+              filePath: '.\tasks\Initialize.Environment.ps1'
+              pwsh: true
+
+          - task: PowerShell@2
+            displayName: "Build time"
+            inputs:
+              filePath: '.\tasks\build.ps1'
+              pwsh: true
+
+          - task: ArchiveFiles@2
+            inputs:
+              rootFolderOrFile: '$(Build.StagingDirectory)'
+              includeRootFolder: false
+              archiveType: 'zip'
+              archiveFile: '$(Build.StagingDirectory)/drop.zip'
+              replaceExistingArchive: true
+              verbose: true
+
+          - task: PowerShell@2
+            displayName: "Remote build time.."
+            inputs:
+              targetType: 'inline'
+              script: |
+                $s = New-PSSession -HostName apptest@$(pip) -SSHTransport -KeyFilePath $(Agent.TempDirectory)/sshid_rsa
+                write-host "Sending artifacts to $(vmName).."
+                SCP -i $(Agent.TempDirectory)/sshid_rsa $(Build.StagingDirectory)/drop.zip apptest@$(pip)`:C:\bin
+                write-host "unpacking artifact.."
+                $sb = {
+                  Expand-Archive -Path C:\bin\drop.zip -Destination C:\bin
+                  gci C:\bin
+                }
+                Invoke-Command -Session $s -ScriptBlock $sb
+                $sb = {
+                  & $env:Programdata\chocolatey\bin\psexec -accepteula -s powershell.exe -executionpolicy bypass -file "C:\bin\invoke.installation.ps1"
+                }
+                Invoke-Command -Session $s -ScriptBlock $sb
+              pwsh: true
